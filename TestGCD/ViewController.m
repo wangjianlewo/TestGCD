@@ -16,7 +16,7 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     // Do any additional setup after loading the view, typically from a nib.
-    [self testTimer];
+    [self testDependency3];
 }
 #pragma mark - 10秒后执行某个任务
 - (void)testAfterDo
@@ -81,21 +81,89 @@
     NSLog(@"end %@",[NSThread currentThread]);
 }
 
--(void)testDependency2
+-(void)testDependency4
 {
     NSLog(@"begin %@",[NSThread currentThread]);
 
     dispatch_queue_t queue = dispatch_queue_create("12312312", DISPATCH_QUEUE_CONCURRENT);
     dispatch_group_t group = dispatch_group_create();
+    
+    dispatch_group_enter(group);
     dispatch_group_async(group,queue,
                          ^{
-                             sleep(6.0);
-                             NSLog(@"----1-----%@", [NSThread currentThread]);
+                             [self methodAsync:^(NSInteger value) {
+                                 NSLog(@"----8秒的异步方法返回1-----%ld", value);
+                                 dispatch_group_leave(group);
+                             }];
+                             NSLog(@"----1-----完成%@", [NSThread currentThread]);
+
                          });
+    
+    dispatch_group_enter(group);
     dispatch_group_async(group,queue,
                          ^{
-                             sleep(4.0);
-                             NSLog(@"----2-----%@", [NSThread currentThread]);
+                             [self methodAsync:^(NSInteger value) {
+                                 NSLog(@"----8秒的异步方法返回2-----%ld", value);
+                                 dispatch_group_leave(group);
+                             }];
+                             NSLog(@"----2-----完成%@", [NSThread currentThread]);
+
+                         });
+    //queue,可替换为mainQueue，使任务3在主线程执行
+    dispatch_group_notify(group, queue, ^{
+        NSLog(@"----3-----%@", [NSThread currentThread]);
+    });
+    NSLog(@"end %@",[NSThread currentThread]);
+}
+
+-(void)testDependency2
+{
+    NSLog(@"begin %@",[NSThread currentThread]);
+    
+    dispatch_queue_t queue = dispatch_queue_create("12312312", DISPATCH_QUEUE_CONCURRENT);
+    dispatch_group_t group = dispatch_group_create();
+    
+    dispatch_group_async(group,queue,
+                         ^{
+                             NSLog(@"----1-----");
+                             sleep(5);
+                             NSLog(@"----1-----完成%@", [NSThread currentThread]);
+                         });
+    
+    dispatch_group_async(group,queue,
+                         ^{
+                             NSLog(@"----2-----");
+                             sleep(6);
+                             NSLog(@"----2-----完成%@", [NSThread currentThread]);
+                         });
+    //queue,可替换为mainQueue，使任务3在主线程执行
+    dispatch_group_notify(group, queue, ^{
+        NSLog(@"----3-----%@", [NSThread currentThread]);
+    });
+    NSLog(@"end %@",[NSThread currentThread]);
+}
+
+-(void)testDependency3
+{
+    NSLog(@"begin %@",[NSThread currentThread]);
+    
+    dispatch_queue_t queue = dispatch_queue_create("12312312", DISPATCH_QUEUE_CONCURRENT);
+    dispatch_group_t group = dispatch_group_create();
+    
+    dispatch_group_async(group,queue,
+                         ^{
+                             [self methodAsync:^(NSInteger value) {
+                                 NSLog(@"----8秒的异步方法返回1-----%ld", value);
+                             }];
+                             NSLog(@"----1-----完成%@", [NSThread currentThread]);
+                         });
+    
+    dispatch_group_async(group,queue,
+                         ^{
+                             [self methodAsync:^(NSInteger value) {
+                                 NSLog(@"----8秒的异步方法返回2-----%ld", value);
+                             }];
+                             NSLog(@"----2-----完成%@", [NSThread currentThread]);
                          });
     //queue,可替换为mainQueue，使任务3在主线程执行
     dispatch_group_notify(group, queue, ^{
@@ -181,10 +249,10 @@
     //创建对应并发数的信号量
     dispatch_semaphore_t semaphore = dispatch_semaphore_create(count);
     
-    //往执行任务的串行队列中，加入10个异步任务
+    //往执行任务的串行队列中，加入5个异步任务
     for (NSInteger i = 0; i < 5; i++) {
         dispatch_async(serialQueue, ^{
-            //当信号总量少于或等于0的时候就会一直等待，否则就可以正常的执行，并让信号总量-1。
+            //dispatch_semaphore_wait 如果信号总量少于或等于0的时候就会一直等待，信号量不变。如果信号量大于0，则正常的执行，并让信号总量-1。
             //当添加到第count个任务时，信号量变为0，进入等待，直到有其他任务完成，发送信号量+1 则，继续执行任务
             dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
             dispatch_async(workConcurrentQueue, ^{
@@ -206,14 +274,26 @@
     NSLog(@"testAsyncToSync 开始");
     __block NSInteger result = 0;
     dispatch_semaphore_t sema = dispatch_semaphore_create(0);
+    
     [self methodAsync:^(NSInteger value) {
         result = value;
         dispatch_semaphore_signal(sema);
     }];
-    // 这里本来同步方法会立即返回，但信号量=0使得线程阻塞
-    // 当异步方法回调之后，发送信号，信号量变为1，这里的阻塞将被解除，从而返回正确的结果
     dispatch_semaphore_wait(sema, DISPATCH_TIME_FOREVER);
     NSLog(@"testAsyncToSync 结束 result:%ld", (long)result);
+    
+    [self methodAsync:^(NSInteger value) {
+        result = value;
+//        dispatch_semaphore_signal(sema);
+    }];
+    
+    dispatch_semaphore_wait(sema, DISPATCH_TIME_FOREVER);
+    NSLog(@"testAsyncToSync 结束 result:%ld", (long)result);
+
+    // 这里本来同步方法会立即返回，但信号量=0使得线程阻塞
+    // 当异步方法回调之后，发送信号，信号量变为1，这里的阻塞将被解除，从而返回正确的结果，此时信号量-1.又变为0
+
+
     return result;
 }
 // 异步方法
@@ -221,7 +301,7 @@
 {
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
         NSLog(@"methodAsync 异步开始");
-        sleep(2);
+        sleep(8);
         NSLog(@"methodAsync 异步结束");
         if (callBack) {
             callBack(5);
